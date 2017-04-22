@@ -1,0 +1,13 @@
+<resources>
+    <string name="app_name">ChatApp</string>
+    <string name="discover_device">Enable Discovery</string>
+    <string name="scan_devices">Scan Devices</string>
+    <string name="use_bluetooth">Connect via Bluetooth</string>
+    <string name="use_wifi">Connect via WiFi</string>
+    <string name="send">Send</string>
+    <string name="chat_hint">Type a message to send</string>
+    <string name="send_image">Share Image</string>
+    <string name="content_description_record_audio">Hold to Record Audio</string>
+    <string name="enable_p2p_button">P2P On/Off</string>
+    <string name="discover_peers_button">Discover</string>
+</resources>
