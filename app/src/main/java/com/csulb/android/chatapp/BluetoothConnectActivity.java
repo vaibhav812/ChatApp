@@ -30,18 +30,43 @@ import java.io.IOException;
 import java.util.UUID;
 
 public class BluetoothConnectActivity extends AppCompatActivity implements AdapterView.OnItemClickListener{
-    BluetoothManager bluetoothManager = null;
-    BluetoothAdapter bluetoothAdapter = null;
-    IntentFilter filter = null;
-    DeviceListAdapter mAdapter = null;
-    ListView deviceListView = null;
-    BluetoothServerThread bluetoothServerThread = null;
-    Handler handler;
-    public static BluetoothSocket socket;
     public static final int REQUEST_ENABLE_BLUETOOTH = 10;
     public static final int REQUEST_COARSE_LOCATION = 11;
     public static final UUID APP_UUID = UUID.fromString("d0ffb520-2334-11e7-9598-0800200c9a66");
     public static final String APP_NAME = "ChatApp";
+    private static final String TAG = "BluetoothConnectAct";
+    //Handler handler;
+    public static BluetoothSocket socket;
+    BluetoothManager bluetoothManager = null;
+    BluetoothAdapter bluetoothAdapter = null;
+    IntentFilter filter = null;
+    DeviceListAdapter mAdapter = null;
+    private final BroadcastReceiver discoverReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            Log.d(TAG, "Broadcast received: " + intent.getAction());
+            String action = intent.getAction();
+            if (BluetoothDevice.ACTION_FOUND.equals(action)) {
+                BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
+                int position = mAdapter.getPosition(device);
+                Log.d(TAG, "Position: " + String.valueOf(position));
+                if (position < 0) {
+                    mAdapter.add(device);
+                    mAdapter.notifyDataSetChanged();
+                }
+            } else if (BluetoothAdapter.ACTION_DISCOVERY_FINISHED.equals(action)) {
+                Log.d(TAG, "Bluetooth discovery finished");
+            }
+        }
+    };
+    ListView deviceListView = null;
+    BluetoothServerThread bluetoothServerThread = null;
+    Handler handler = new Handler() {
+        @Override
+        public void handleMessage(Message msg) {
+            //Not used for handling messages
+        }
+    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -57,7 +82,7 @@ public class BluetoothConnectActivity extends AppCompatActivity implements Adapt
         deviceListView.setOnItemClickListener(this);
 
         bluetoothManager =(BluetoothManager) getSystemService(BLUETOOTH_SERVICE);
-        //bluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
+
         if(bluetoothManager == null){
             Toast.makeText(this, "Bluetooth service unavailable!", Toast.LENGTH_SHORT).show();
         }
@@ -70,44 +95,26 @@ public class BluetoothConnectActivity extends AppCompatActivity implements Adapt
         if(!bluetoothAdapter.isEnabled()) {
             Intent enableBluetoothIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
             startActivityForResult(enableBluetoothIntent, REQUEST_ENABLE_BLUETOOTH);
+        } else {
+            Log.d(TAG, "Bluetooth is enabled. Starting service thread...");
+            bluetoothServerThread = new BluetoothServerThread(BluetoothConnectActivity.this, bluetoothAdapter, handler);
+            bluetoothServerThread.start();
         }
-        Log.e("BLUETOOTH", bluetoothAdapter.isEnabled() +"");
-
-        handler = new Handler(){
-            @Override
-            public void handleMessage(Message msg) {
-                Log.e("HANDLER", msg.toString());
-            }
-        };
-
-        bluetoothServerThread = new BluetoothServerThread(BluetoothConnectActivity.this, bluetoothAdapter, handler);
-        bluetoothServerThread.start();
     }
 
-    private final BroadcastReceiver discoverReceiver = new BroadcastReceiver() {
-        @Override
-        public void onReceive(Context context, Intent intent) {
-            Log.e("BROADCAST RECEIVED", intent.getAction());
-            String action = intent.getAction();
-            if(BluetoothDevice.ACTION_FOUND.equals(action)) {
-                BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
-                int position = mAdapter.getPosition(device);
-                Log.e("Position" , String.valueOf(position));
-                if(position < 0) {
-                    mAdapter.add(device);
-                    mAdapter.notifyDataSetChanged();
-                }
-            }
-            else if(BluetoothAdapter.ACTION_DISCOVERY_FINISHED.equals(action)) {
-                Log.e("DISCOVERY", "FINISHED");
-            }
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (requestCode == REQUEST_ENABLE_BLUETOOTH && resultCode == RESULT_OK) {
+            Log.d(TAG, "Starting service thread from activity result");
+            bluetoothServerThread = new BluetoothServerThread(BluetoothConnectActivity.this, bluetoothAdapter, handler);
+            bluetoothServerThread.start();
         }
-    };
+    }
 
     @Override
     protected void onResume() {
         super.onResume();
-        Log.e("BROADCAST", "REGISTERED");
+        Log.d(TAG, "Broadcast registered");
         /*if(!bluetoothServerThread.isAlive()) {
             bluetoothServerThread.start();
         }*/
@@ -116,14 +123,15 @@ public class BluetoothConnectActivity extends AppCompatActivity implements Adapt
 
     @Override
     protected void onPause() {
+        //TODO: Perhaps stop the discovery broadcast receiver?
         super.onPause();
     }
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        Log.e("Server", "Shutting down");
-        Log.e("BluetoothConnect", "BROADCAST STOPPED");
+        Log.d(TAG, "Server shutting down");
+        Log.d(TAG, "Broadcast stopped");
         unregisterReceiver(discoverReceiver);
         bluetoothServerThread.cancel();
     }
@@ -178,12 +186,10 @@ public class BluetoothConnectActivity extends AppCompatActivity implements Adapt
                 socket.connect();
             }
         } catch (IOException ioe) {
-            Log.e("BluetoothConnect", "Socket's create() method failed", ioe);
+            Log.d(TAG, "Socket's create() method failed", ioe);
         }
         if(socket != null) {
-            Log.e("SOCKET CONNECTED", String.valueOf(socket.isConnected()));
-            //ConnectedThread thread = new ConnectedThread(socket, handler);
-            //thread.start();
+            Log.d(TAG, "Connected to the server: " + String.valueOf(socket.isConnected()));
             Intent intent = new Intent(this, ChatActivity.class);
             intent.putExtra(MessageConstants.CONNECTION_MODE, MessageConstants.CONNECTION_MODE_BLUETOOTH);
             intent.putExtra(MessageConstants.IS_SERVER, false);

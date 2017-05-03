@@ -3,18 +3,15 @@ package com.csulb.android.chatapp;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.net.nsd.NsdManager;
 import android.net.wifi.WifiManager;
 import android.net.wifi.p2p.WifiP2pConfig;
 import android.net.wifi.p2p.WifiP2pDevice;
-import android.net.wifi.p2p.WifiP2pDeviceList;
-import android.net.wifi.p2p.WifiP2pInfo;
 import android.net.wifi.p2p.WifiP2pManager;
+import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
 import android.provider.Settings;
 import android.support.v7.app.AppCompatActivity;
-import android.os.Bundle;
 import android.util.Log;
 import android.view.Menu;
 import android.view.MenuInflater;
@@ -24,12 +21,11 @@ import android.widget.AdapterView;
 import android.widget.ListView;
 import android.widget.Toast;
 
-import java.lang.reflect.Method;
-import java.net.InetAddress;
-import java.nio.charset.Charset;
 import java.util.ArrayList;
 
+//TODO: ChatActivity and WiFiChatActivity should be merged and only 1 general ChatActivity should be created.
 public class WiFiDirectActivity extends AppCompatActivity {
+    private static String TAG = "WiFiDirectActivity";
     WifiP2pManager wifiManager = null;
     WifiP2pManager.Channel channel = null;
     ConnectionBroadcastReceiver brdcastreceiver = null;
@@ -39,14 +35,34 @@ public class WiFiDirectActivity extends AppCompatActivity {
     WiFiClientThread clientThread;
     ListView peerListView;
     PeerListAdapter peerListAdapter;
-    private static String TAG = "WiFiDirectActivity";
+    boolean unregisterBReceiver = false;
+    Handler handler = new Handler() {
+        @Override
+        public void handleMessage(Message msg) {
+            switch (msg.what) {
+                case MessageConstants.PEER_LIST:
+                    ArrayList<WifiP2pDevice> deviceList = (ArrayList<WifiP2pDevice>) msg.obj;
+                    for (WifiP2pDevice device : deviceList) {
+                        int position = peerListAdapter.getPosition(device);
+                        if (position < 0) {
+                            peerListAdapter.add(device);
+                        }
+                    }
+                    peerListAdapter.notifyDataSetChanged();
+                    break;
+                case MessageConstants.UNREGISTER_RECEIVER:
+                    unregisterBReceiver = (Boolean) msg.obj;
+                    break;
+            }
+        }
+    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_wifi_direct);
 
-
+        unregisterBReceiver = false;
         peerListView = (ListView) findViewById(R.id.peer_list_view);
         peerListAdapter = new PeerListAdapter(WiFiDirectActivity.this, R.id.wifi_peer_list_item);
         peerListView.setAdapter(peerListAdapter);
@@ -61,21 +77,8 @@ public class WiFiDirectActivity extends AppCompatActivity {
 
                     @Override
                     public void onSuccess() {
-                        Toast.makeText(WiFiDirectActivity.this, "Connection successfull", Toast.LENGTH_SHORT).show();
-                        Intent intent = new Intent(WiFiDirectActivity.this, ChatActivity.class);
-                        intent.putExtra(MessageConstants.CONNECTION_MODE, MessageConstants.CONNECTION_MODE_WIFI);
-                        intent.putExtra(MessageConstants.IS_SERVER, false);
-                        /*wifiManager.requestConnectionInfo(channel, new WifiP2pManager.ConnectionInfoListener() {
-                            @Override
-                            public void onConnectionInfoAvailable(WifiP2pInfo info) {
-                                InetAddress groupAddress = info.groupOwnerAddress;
-                                Log.d(TAG, "Inet addr: " + " " + groupAddress.getHostAddress());
-                                Log.d(TAG, "Inet addr: " + new String(groupAddress.getAddress(), Charset.defaultCharset()));
-                                Log.d(TAG, "Group owner " + info.isGroupOwner);
-                                clientThread = new WiFiClientThread(info.groupOwnerAddress);
-                                clientThread.start();
-                            }
-                        });*/
+                        Toast.makeText(WiFiDirectActivity.this, "Connection successful", Toast.LENGTH_SHORT).show();
+                        //finish();
                     }
 
                     @Override
@@ -96,36 +99,12 @@ public class WiFiDirectActivity extends AppCompatActivity {
         intentFilter.addAction(WifiP2pManager.WIFI_P2P_THIS_DEVICE_CHANGED_ACTION);
     }
 
-    Handler handler = new Handler(){
-        @Override
-        public void handleMessage(Message msg) {
-            switch (msg.what) {
-                case MessageConstants.PEER_LIST:
-                    ArrayList<WifiP2pDevice> deviceList = (ArrayList<WifiP2pDevice>) msg.obj;
-                    for(WifiP2pDevice device : deviceList) {
-                        int position = peerListAdapter.getPosition(device);
-                        if(position < 0 ) {
-                            peerListAdapter.add(device);
-                        }
-                    }
-                    peerListAdapter.notifyDataSetChanged();
-                    break;
-            }
-        }
-    };
-
     @Override
     protected void onResume() {
         super.onResume();
-        brdcastreceiver = new ConnectionBroadcastReceiver(WiFiDirectActivity.this, wifiManager, channel, handler);
+        brdcastreceiver = new ConnectionBroadcastReceiver(WiFiDirectActivity.this, wifiManager, channel, handler, unregisterBReceiver);
         registerReceiver(brdcastreceiver, intentFilter);
         Log.d(TAG, "Registered Wifi broadcast receiver");
-        /*if(serverThread.getState() == Thread.State.NEW) {
-            serverThread.start();
-        }
-        if(clientThread.getState() == Thread.State.NEW && clientThread.isAlive()) {
-            clientThread.start();
-        }*/
     }
 
     @Override
@@ -138,8 +117,14 @@ public class WiFiDirectActivity extends AppCompatActivity {
     @Override
     protected void onDestroy() {
         super.onDestroy();
-        serverThread.cancel();
-        clientThread.cancel();
+
+        if (serverThread != null) {
+            serverThread.cancel();
+        }
+
+        if (clientThread != null) {
+            clientThread.cancel();
+        }
     }
 
     @Override
@@ -153,9 +138,15 @@ public class WiFiDirectActivity extends AppCompatActivity {
     public boolean onOptionsItemSelected(MenuItem item) {
         switch(item.getItemId()) {
             case R.id.btn_direct_enable:
+
+                if (unregisterBReceiver) {
+                    unregisterBReceiver = false;
+                    brdcastreceiver = new ConnectionBroadcastReceiver(WiFiDirectActivity.this, wifiManager, channel, handler, unregisterBReceiver);
+                    registerReceiver(brdcastreceiver, intentFilter);
+                    Log.d(TAG, "Registered Wifi broadcast receiver");
+                }
+
                 if (wifiManager != null && channel != null) {
-                    serverThread = new WiFiServerThread();
-                    serverThread.start();
                     startActivity(new Intent(Settings.ACTION_WIFI_SETTINGS));
 
                 } else {
@@ -164,6 +155,13 @@ public class WiFiDirectActivity extends AppCompatActivity {
                 }
                 return true;
             case R.id.btn_direct_discover:
+
+                if (unregisterBReceiver) {
+                    unregisterBReceiver = false;
+                    brdcastreceiver = new ConnectionBroadcastReceiver(WiFiDirectActivity.this, wifiManager, channel, handler, unregisterBReceiver);
+                    registerReceiver(brdcastreceiver, intentFilter);
+                    Log.d(TAG, "Registered Wifi broadcast receiver");
+                }
                 if(!manager.isWifiEnabled()) {
                     Toast.makeText(WiFiDirectActivity.this, "Wifi is off. Please turn it on",
                             Toast.LENGTH_SHORT).show();

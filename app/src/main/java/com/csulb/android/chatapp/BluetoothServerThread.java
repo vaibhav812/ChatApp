@@ -15,18 +15,18 @@ import java.io.IOException;
  */
 
 class BluetoothServerThread extends Thread {
+    public static BluetoothSocket socket;
     private final BluetoothServerSocket serverSocket;
     private final String TAG = "BluetoothServerThread";
     Handler handler;
     Context ctx = null;
-    public static BluetoothSocket socket;
 
     BluetoothServerThread(Context ctx, BluetoothAdapter adapter, Handler handler) {
         BluetoothServerSocket tmp = null;
         try {
             tmp = adapter.listenUsingRfcommWithServiceRecord(BluetoothConnectActivity.APP_NAME, BluetoothConnectActivity.APP_UUID);
         } catch (IOException e) {
-            Log.e(TAG, "Socket's listen() method failed", e);
+            Log.d(TAG, "Socket's listen() method failed", e);
         }
         serverSocket = tmp;
         this.ctx = ctx;
@@ -34,18 +34,20 @@ class BluetoothServerThread extends Thread {
     }
 
     public void run() {
-        //BluetoothSocket socket = null;
-        while (true) {
+        while (!this.isInterrupted()) {
+            if (serverSocket == null) {
+                continue;
+            }
             try {
                 socket = serverSocket.accept();
             } catch (IOException e) {
-                Log.e(TAG, "Socket's accept() method failed", e);
+                Log.d(TAG, "Socket's accept() method failed", e);
                 break;
             }
 
             if (socket != null) {
                 try {
-                    Log.e(TAG, "SERVER CONNECTED");
+                    Log.d(TAG, "Server accepted a client request");
                     handler.post(new Runnable() {
                         @Override
                         public void run() {
@@ -56,7 +58,7 @@ class BluetoothServerThread extends Thread {
                         }
                     });
                 } catch(Exception ioe) {
-                    Log.e(TAG, "Error occurred while closing socket ", ioe);
+                    Log.d(TAG, "Error occurred while closing socket ", ioe);
                 }
                 break;
             }
@@ -67,7 +69,7 @@ class BluetoothServerThread extends Thread {
         try {
             serverSocket.close();
         } catch (IOException e) {
-            Log.e(TAG, "Could not close the connect socket", e);
+            Log.d(TAG, "Could not close the connect socket", e);
         }
     }
 }

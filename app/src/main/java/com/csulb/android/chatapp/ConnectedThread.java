@@ -13,19 +13,20 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.ByteBuffer;
 import java.nio.charset.Charset;
 import java.util.Arrays;
 
 /**
- * Created by vaibhavjain on 4/17/2017
+ * Created by vaibhavjain on 4/24/2017
  */
 
 public class ConnectedThread extends Thread {
     private final BluetoothSocket bluetoothSocket;
     private final InputStream inputStream;
     private final OutputStream outputStream;
-    private Handler handler;
     private final String TAG = "ConnectedThread";
+    private Handler handler;
 
     public ConnectedThread(BluetoothSocket socket, Handler handler) {
         bluetoothSocket = socket;
@@ -41,45 +42,89 @@ public class ConnectedThread extends Thread {
         } catch (IOException e) {
             Log.e(TAG, "Error occurred when creating output stream", e);
         }
-        inputStream =  tmpIn;
+        inputStream = tmpIn;
         outputStream = tmpOut;
         this.handler = handler;
+    }
+
+    public void run() {
+        byte[] bufferData = new byte[16384];
+        int numOfPackets = 0;
+        int datatype = 0;
+        ByteArrayOutputStream bos = new ByteArrayOutputStream();
+        while (!this.isInterrupted()) {
+            try {
+                int numOfBytes = inputStream.read(bufferData);
+                byte[] trimmedBufferData = Arrays.copyOf(bufferData, numOfBytes);
+                bufferData = new byte[16384];
+                ByteBuffer tempBuffer = ByteBuffer.wrap(trimmedBufferData);
+                if (datatype == 0) {
+                    datatype = tempBuffer.getInt();
+                    Log.d(TAG, "Datatype: " + datatype);
+                }
+                if (numOfPackets == 0) {
+                    numOfPackets = tempBuffer.getInt();
+                    Log.d(TAG, "Packets size: " + numOfPackets);
+                }
+                byte[] dst = new byte[tempBuffer.remaining()];
+                tempBuffer.get(dst);
+                bos.write(dst);
+                //Following condition checks if we have received all necessary bytes to construct a message out of it.
+                if (bos.size() == numOfPackets) {
+                    //For Text and Audio notes
+                    if (datatype != 2) {
+                        Log.d(TAG, "Data: " + new String(bos.toByteArray(), Charset.defaultCharset()));
+                        Message msg = handler.obtainMessage(MessageConstants.MESSAGE_READ, -1, datatype, bos.toByteArray());
+                        msg.sendToTarget();
+                    } else {    //For images - Special check because we have to decode the image from Base64.
+                        String decodedString = new String(bos.toByteArray(), Charset.defaultCharset());
+                        Log.d(TAG, "Image Base64 decoded string: " + decodedString);
+                        byte[] decodedStringArray = Base64.decode(decodedString, Base64.DEFAULT);
+                        Bitmap bp = BitmapFactory.decodeByteArray(decodedStringArray, 0, decodedStringArray.length);
+                        Message msg = handler.obtainMessage(MessageConstants.MESSAGE_READ, -1, datatype, bp);
+                        msg.sendToTarget();
+                    }
+                    //Re-initialize for the next message.
+                    datatype = 0;
+                    numOfPackets = 0;
+                    bos = new ByteArrayOutputStream();
+                }
+            } catch (IOException e) {
+                Log.d(TAG, "Input stream was disconnected", e);
+                break;
+            }
+        }
     }
 
     public void write(byte[] bytes, String datatype) {
         try {
             Message writtenMsg = null;
-            if(datatype.equals(MessageConstants.DATATYPE_IMAGE)) {
-                outputStream.write(MessageConstants.START_IMAGE_INDICATOR.getBytes());
-                outputStream.flush();
-                outputStream.write(String.valueOf(Math.ceil(((float)bytes.length)/990)).getBytes());
-                outputStream.flush();
-                outputStream.write(bytes);
-                outputStream.flush();
+            ByteArrayOutputStream tempOutputStream = new ByteArrayOutputStream();
+            ByteBuffer tempBuffer = ByteBuffer.allocate(bytes.length + 8);
+            if (datatype.equals(MessageConstants.DATATYPE_IMAGE)) {
+                tempBuffer.putInt(2);
                 ByteArrayOutputStream imageStream = new ByteArrayOutputStream();
                 imageStream.write(bytes);
                 String decodedString = new String(imageStream.toByteArray(), Charset.defaultCharset());
                 byte[] decodedStringArray = Base64.decode(decodedString, Base64.DEFAULT);
                 Bitmap bp = BitmapFactory.decodeByteArray(decodedStringArray, 0, decodedStringArray.length);
                 writtenMsg = handler.obtainMessage(MessageConstants.MESSAGE_WRITE, -1, 2, bp);
-            } else if(datatype.equals(MessageConstants.DATATYPE_TEXT)) {
-                outputStream.write(MessageConstants.TEXT_SEND_INDICATOR.getBytes());
-                outputStream.flush();
-                outputStream.write("1.0".getBytes());
-                outputStream.flush();
-                outputStream.write(bytes);
-                outputStream.flush();
+                imageStream.close();
+            } else if (datatype.equals(MessageConstants.DATATYPE_TEXT)) {
+                tempBuffer.putInt(1);
                 writtenMsg = handler.obtainMessage(MessageConstants.MESSAGE_WRITE, -1, 1, bytes);
-            } else if(datatype.equals(MessageConstants.DATATYPE_FILE)) {
-                outputStream.write(MessageConstants.FILE_SEND_INDICATOR.getBytes());
-                outputStream.flush();
-                outputStream.write(String.valueOf(Math.ceil(((float)bytes.length)/990)).getBytes());
-                outputStream.flush();
-                outputStream.write(bytes);
-                outputStream.flush();
+            } else if (datatype.equals(MessageConstants.DATATYPE_FILE)) {
+                tempBuffer.putInt(3);
                 writtenMsg = handler.obtainMessage(MessageConstants.MESSAGE_WRITE, -1, 3, bytes);
             }
-            if(writtenMsg != null) {
+            Log.d(TAG, "Sending size: " + bytes.length);
+            tempBuffer.putInt(bytes.length);
+            Log.d(TAG, "Sending data: " + new String(bytes, Charset.defaultCharset()));
+            tempBuffer.put(bytes);
+            tempOutputStream.write(tempBuffer.array());
+            outputStream.write(tempOutputStream.toByteArray());
+            tempOutputStream.close();
+            if (writtenMsg != null) {
                 writtenMsg.sendToTarget();
             }
         } catch (IOException e) {
@@ -93,85 +138,8 @@ public class ConnectedThread extends Thread {
         }
     }
 
-    public void run() {
-        int numOfBytes;
-        ByteArrayOutputStream dataStream = new ByteArrayOutputStream();
-        Bitmap bp = null;
-        int counter = 0;
-        int numOfPackets = -1;
-        boolean isDatatypeReceived = false, isPacketReceived = false;
-        int type = -1;
-        while (true) {
-            try {
-                byte[] bufferData = new byte[1024];
-                numOfBytes = inputStream.read(bufferData);
-                byte[] trimmedBufferData = Arrays.copyOf(bufferData, numOfBytes);
-                bufferData = new byte[1024];
-                if(!isDatatypeReceived && !isPacketReceived) {
-                    if(Arrays.equals(MessageConstants.TEXT_SEND_INDICATOR.getBytes(), trimmedBufferData)) {
-                        type = 1;
-                    } else if(Arrays.equals(MessageConstants.START_IMAGE_INDICATOR.getBytes(), trimmedBufferData)) {
-                        type = 2;
-                    } else if(Arrays.equals(MessageConstants.FILE_SEND_INDICATOR.getBytes(), trimmedBufferData)) {
-                        type = 3;
-                    }
-                    isDatatypeReceived = true;
-                } else if(isDatatypeReceived && !isPacketReceived) {
-                    isPacketReceived = true;
-                    String str = new String(trimmedBufferData);
-                    String[] strParts = str.split(".0");
-                    Double d = Double.parseDouble(strParts[0]);
-                    numOfPackets = d.intValue();
-                    if(strParts.length > 1 && strParts[1].length() > 0) {
-                        dataStream.write(strParts[1].getBytes());
-                        counter++;
-                        if(numOfPackets == 1){
-                            Message readMsg = handler.obtainMessage(MessageConstants.MESSAGE_READ, numOfBytes, type, strParts[1].getBytes());
-                            readMsg.sendToTarget();
-                            isDatatypeReceived = false;
-                            isPacketReceived = false;
-                            dataStream.reset();
-                            counter = 0;
-                            numOfPackets = -1;
-                        }
-                    }
-                } else if(isDatatypeReceived && isPacketReceived && counter == numOfPackets - 1) {
-                    if(type == 1 ){
-                        Message readMsg = handler.obtainMessage(MessageConstants.MESSAGE_READ, numOfBytes, type, trimmedBufferData);
-                        readMsg.sendToTarget();
-                    } else if(type == 2) {
-                        dataStream.write(trimmedBufferData);
-                        dataStream.flush();
-                        String decodedString = new String(dataStream.toByteArray(), Charset.defaultCharset());
-                        byte[] decodedStringArray = Base64.decode(decodedString, Base64.DEFAULT);
-                        bp = BitmapFactory.decodeByteArray(decodedStringArray, 0, decodedStringArray.length);
-                        Message readMsg = handler.obtainMessage(MessageConstants.MESSAGE_READ, numOfBytes, type, bp);
-                        readMsg.sendToTarget();
-                    } else if(type == 3) {
-                        dataStream.write(trimmedBufferData);
-                        dataStream.flush();
-                        Message readMsg = handler.obtainMessage(MessageConstants.MESSAGE_READ, numOfBytes, type, dataStream.toByteArray());
-                        readMsg.sendToTarget();
-                    }
-                    dataStream.reset();
-                    counter = 0;
-                    numOfPackets = -1;
-                    isDatatypeReceived = false;
-                    isPacketReceived = false;
-                }
-                else if(isDatatypeReceived && isPacketReceived && counter < numOfPackets - 1) {
-                    dataStream.write(trimmedBufferData);
-                    dataStream.flush();
-                    counter++;
-                }
-            } catch (IOException e) {
-                Log.d(TAG, "Input stream was disconnected", e);
-                break;
-            }
-        }
-    }
-
     public void cancel() {
+        this.interrupt();
         try {
             bluetoothSocket.close();
         } catch (IOException e) {

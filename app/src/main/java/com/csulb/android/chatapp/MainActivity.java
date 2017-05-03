@@ -1,20 +1,17 @@
 package com.csulb.android.chatapp;
 
 import android.Manifest;
-import android.content.Context;
 import android.content.Intent;
-import android.net.wifi.WifiManager;
-import android.net.wifi.p2p.WifiP2pManager;
+import android.os.Bundle;
 import android.support.v4.app.ActivityCompat;
 import android.support.v7.app.AppCompatActivity;
-import android.os.Bundle;
 import android.view.View;
 import android.widget.Button;
 
 public class MainActivity extends AppCompatActivity {
+    private static final int REQUEST_PERMISSION_ALL = 9;
     Button bluetoothButton = null;
     Button wifiButton = null;
-    private static final int REQUEST_PERMISSION_ALL = 9;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -43,7 +40,6 @@ public class MainActivity extends AppCompatActivity {
             public void onClick(View v) {
                 Intent intent = new Intent(MainActivity.this, BluetoothConnectActivity.class);
                 startActivity(intent);
-                finish();
             }
         });
 
@@ -52,7 +48,6 @@ public class MainActivity extends AppCompatActivity {
             public void onClick(View v) {
                 Intent intent = new Intent(MainActivity.this, WiFiDirectActivity.class);
                 startActivity(intent);
-                finish();
             }
         });
     }

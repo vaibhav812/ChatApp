@@ -41,20 +41,80 @@ import java.io.IOException;
 import static android.os.Environment.getExternalStorageDirectory;
 
 public class ChatActivity extends AppCompatActivity {
+    public static final int SELECT_IMAGE = 9;
+    private static final String TAG = "ChatActivity";
+    private static final int REQUEST_RECORDING_PERMISSIONS = 18;
     EditText messageText;
     Button sendButton;
     ListView messageListView;
     ImageButton recordAudioButton;
     ConnectedThread cThread;
     ChatMessageAdapter messageAdapter;
-    private MediaRecorder recorder;
     String fileName = null;
     Bitmap imageBitmap;
-    private ImageView fullscreen;
     MediaPlayer player = null;
-    private static final String TAG = "ChatActivity";
-    public static final int SELECT_IMAGE = 9;
-    private static final int REQUEST_RECORDING_PERMISSIONS = 18;
+    Handler handler = new Handler() {
+        @Override
+        public void handleMessage(Message msg) {
+            switch (msg.what) {
+                case MessageConstants.MESSAGE_READ:
+                    if (msg.arg2 == 1) {
+                        byte[] readData = (byte[]) msg.obj;
+                        messageAdapter.add(new ChatMessage(false, new String(readData)));
+                        messageAdapter.notifyDataSetChanged();
+                    } else if (msg.arg2 == 2) {
+                        imageBitmap = (Bitmap) msg.obj;
+                        if (imageBitmap != null) {
+                            messageAdapter.add(new ChatMessage(false, imageBitmap));
+                            messageAdapter.notifyDataSetChanged();
+                        } else {
+                            Log.e(TAG, "Fatal: Image bitmap is null");
+                        }
+                    } else if (msg.arg2 == 3) {
+                        String filename = getFilename();
+                        FileOutputStream fos;
+                        try {
+                            if (filename != null) {
+                                byte[] buff = (byte[]) msg.obj;
+                                fos = new FileOutputStream(filename);
+                                fos.write(buff);
+                                fos.flush();
+                                fos.close();
+                                messageAdapter.add(new ChatMessage(false, new File(filename)));
+                                messageAdapter.notifyDataSetChanged();
+                            }
+                        } catch (Exception e) {
+                            Toast.makeText(ChatActivity.this, "Could not save the file", Toast.LENGTH_SHORT).show();
+                            Log.e(TAG, "Could not save the file", e);
+                        }
+                    }
+                    break;
+                case MessageConstants.MESSAGE_WRITE:
+                    if (msg.arg2 == 1) {
+                        byte[] writeData = (byte[]) msg.obj;
+                        messageAdapter.add(new ChatMessage(true, new String(writeData)));
+                        messageAdapter.notifyDataSetChanged();
+                    } else if (msg.arg2 == 2) {
+                        imageBitmap = (Bitmap) msg.obj;
+                        if (imageBitmap != null) {
+                            messageAdapter.add(new ChatMessage(true, imageBitmap));
+                            messageAdapter.notifyDataSetChanged();
+                        } else {
+                            Log.e(TAG, "Fatal: Image bitmap is null");
+                        }
+                    } else if (msg.arg2 == 3) {
+                        File f = new File(fileName);
+                        messageAdapter.add(new ChatMessage(true, f));
+                        messageAdapter.notifyDataSetChanged();
+                    }
+                    break;
+                case MessageConstants.MESSAGE_TOAST:
+                    Toast.makeText(getApplicationContext(), msg.getData().getString("toast"), Toast.LENGTH_SHORT).show();
+            }
+        }
+    };
+    private MediaRecorder recorder;
+    private ImageView fullscreen;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -89,7 +149,7 @@ public class ChatActivity extends AppCompatActivity {
         boolean isServer = getIntent().getBooleanExtra(MessageConstants.IS_SERVER, false);
         if(mode == null) {
             Toast.makeText(this, "Could not establish connection.", Toast.LENGTH_LONG).show();
-            Log.e(TAG, "Fatal: Connection mode empty");
+            Log.d(TAG, "Fatal: Connection mode empty");
             finish();
         } else if(mode.equals(MessageConstants.CONNECTION_MODE_BLUETOOTH)) {
             if(isServer) {
@@ -97,7 +157,7 @@ public class ChatActivity extends AppCompatActivity {
             } else {
                 cThread = new ConnectedThread(BluetoothConnectActivity.socket, handler);
             }
-            Log.e("ChatActivity", "STARTING Connection threads.");
+            Log.d(TAG, "STARTING Connection thread : " + cThread.getClass().getName());
             cThread.start();
         }
 
@@ -107,7 +167,7 @@ public class ChatActivity extends AppCompatActivity {
                 String message = messageText.getText().toString();
                 messageText.setText("");
                 if(cThread == null) {
-                    Log.e(TAG, "Fatal: Could not start ConnectedThread");
+                    Log.e(TAG, "Fatal: Could not start " + cThread.getClass().getName());
                     return;
                 }
                 cThread.write(message.getBytes(), MessageConstants.DATATYPE_TEXT);
@@ -146,92 +206,6 @@ public class ChatActivity extends AppCompatActivity {
         } else {
             super.onBackPressed();
         }
-    }
-
-    Handler handler = new Handler(){
-        @Override
-        public void handleMessage(Message msg) {
-            switch(msg.what) {
-                case MessageConstants.MESSAGE_READ:
-                    if(msg.arg2 == 1) {
-                        byte[] readData = (byte[]) msg.obj;
-                        messageAdapter.add(new ChatMessage(false, new String(readData)));
-                        messageAdapter.notifyDataSetChanged();
-                    } else if(msg.arg2 == 2) {
-                        imageBitmap = (Bitmap) msg.obj;
-                        if(imageBitmap != null) {
-                            messageAdapter.add(new ChatMessage(false, imageBitmap));
-                            messageAdapter.notifyDataSetChanged();
-                        } else {
-                            Log.e("IMAGE BITMAP", "IS NULL");
-                        }
-                    } else if(msg.arg2 == 3) {
-                        String filename = getFilename();
-                        FileOutputStream fos;
-                        try {
-                            if(filename != null) {
-                                byte[] buff = (byte[]) msg.obj;
-                                fos = new FileOutputStream(filename);
-                                fos.write(buff);
-                                fos.flush();
-                                fos.close();
-                                messageAdapter.add(new ChatMessage(false, new File(filename)));
-                                messageAdapter.notifyDataSetChanged();
-                            }
-                        } catch(Exception e) {
-                            Toast.makeText(ChatActivity.this, "Could not save the file", Toast.LENGTH_SHORT).show();
-                            Log.e(TAG, "Could not save the file", e);
-                        }
-                    }
-                    break;
-                case MessageConstants.MESSAGE_WRITE:
-                    if(msg.arg2 == 1) {
-                        byte[] writeData = (byte[]) msg.obj;
-                        messageAdapter.add(new ChatMessage(true, new String(writeData)));
-                        messageAdapter.notifyDataSetChanged();
-                    } else if(msg.arg2 == 2) {
-                        imageBitmap = (Bitmap) msg.obj;
-                        if(imageBitmap != null) {
-                            messageAdapter.add(new ChatMessage(true, imageBitmap));
-                            messageAdapter.notifyDataSetChanged();
-                        } else {
-                            Log.e("IMAGE BITMAP", "IS NULL");
-                        }
-                    } else if(msg.arg2 == 3) {
-                        File f = new File(fileName);
-                        messageAdapter.add(new ChatMessage(true, f));
-                        messageAdapter.notifyDataSetChanged();
-                    }
-                    break;
-                case MessageConstants.MESSAGE_TOAST:
-                    Toast.makeText(getApplicationContext(), msg.getData().getString("toast"), Toast.LENGTH_SHORT).show();
-            }
-        }
-    };
-
-    void saveFile(byte[] buff){
-        String filename = getFilename();
-        FileOutputStream fos;
-        try {
-            if(filename != null) {
-                fos = new FileOutputStream(filename);
-                fos.write(buff);
-                fos.close();
-                messageAdapter.add(new ChatMessage(false, new File(filename)));
-                messageAdapter.notifyDataSetChanged();
-            }
-        } catch(Exception e) {
-            Toast.makeText(ChatActivity.this, "Could not save the file", Toast.LENGTH_SHORT).show();
-            Log.e(TAG, "Could not save the file", e);
-        }
-    }
-
-    @Override
-    protected void onResume() {
-        super.onResume();
-        /*if(!cThread.isAlive()) {
-            cThread.start();
-        }*/
     }
 
     @Override
@@ -276,7 +250,7 @@ public class ChatActivity extends AppCompatActivity {
                     ByteArrayOutputStream bos = new ByteArrayOutputStream();
                     bitmap.compress(Bitmap.CompressFormat.JPEG, 50, bos);
                     String encodedImage = Base64.encodeToString(bos.toByteArray(), Base64.DEFAULT);
-                    Log.d("ENCODED STRING", encodedImage);
+                    Log.d(TAG, "Base64 encoded string: " + encodedImage);
                     cThread.write(encodedImage.getBytes(), MessageConstants.DATATYPE_IMAGE);
                 } catch (IOException e) {
                     e.printStackTrace();
